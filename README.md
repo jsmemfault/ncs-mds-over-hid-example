@@ -20,17 +20,50 @@ Zephyr RTOS application implementing the Memfault Diagnostic Service (MDS) proto
 - **Board**: nRF52840 DK (nrf52840dk/nrf52840)
 - **USB**: VID 0x2fe3 (Zephyr Project), PID 0x0007
 
+## Prerequisites
+
+- Python 3.10 or newer
+- [Zephyr SDK](https://docs.zephyrproject.org/latest/develop/toolchains/zephyr_sdk.html) installed
+- nRF52840 DK hardware
+
 ## Setup
 
-### 1. Install Dependencies
+### 1. Clone the Repository
 
 ```bash
-# Zephyr SDK and west should already be installed
-# Activate the Python virtual environment
+git clone <repository-url>
+cd mds-over-hid-app
+```
+
+### 2. Create Python Virtual Environment
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 2. Configure Memfault
+### 3. Install West
+
+```bash
+pip install west
+```
+
+### 4. Initialize West Workspace
+
+This pulls Zephyr RTOS, nRF SDK, and all dependencies (this may take several minutes):
+
+```bash
+west init -l app
+west update
+```
+
+### 5. Install Python Dependencies
+
+```bash
+pip install -r zephyr/scripts/requirements.txt
+```
+
+### 6. Configure Memfault
 
 Copy the template configuration and add your Memfault project key:
 
@@ -41,14 +74,16 @@ cp app/prj.conf.template app/prj.conf
 
 Get your project key from https://app.memfault.com/ → Settings → General
 
-### 3. Build
+### 7. Build
 
 ```bash
 cd app
 west build -b nrf52840dk/nrf52840
 ```
 
-### 4. Flash
+### 8. Flash
+
+Connect your nRF52840 DK via USB and flash:
 
 ```bash
 west flash
