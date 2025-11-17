@@ -27,7 +27,7 @@ Zephyr RTOS application implementing the Memfault Diagnostic Service (MDS) proto
 ```bash
 # Zephyr SDK and west should already be installed
 # Activate the Python virtual environment
-source ../.venv/bin/activate
+source .venv/bin/activate
 ```
 
 ### 2. Configure Memfault
@@ -35,8 +35,8 @@ source ../.venv/bin/activate
 Copy the template configuration and add your Memfault project key:
 
 ```bash
-cp prj.conf.template prj.conf
-# Edit prj.conf and replace YOUR_PROJECT_KEY_HERE with your actual key
+cp app/prj.conf.template app/prj.conf
+# Edit app/prj.conf and replace YOUR_PROJECT_KEY_HERE with your actual key
 ```
 
 Get your project key from https://app.memfault.com/ → Settings → General
@@ -44,6 +44,7 @@ Get your project key from https://app.memfault.com/ → Settings → General
 ### 3. Build
 
 ```bash
+cd app
 west build -b nrf52840dk/nrf52840
 ```
 
@@ -55,7 +56,7 @@ west flash
 
 ## Configuration
 
-Key configuration options in `prj.conf`:
+Key configuration options in `app/prj.conf`:
 
 - `CONFIG_MEMFAULT_NCS_PROJECT_KEY`: Your Memfault project key (required)
 - `CONFIG_MEMFAULT_NCS_DEVICE_ID`: Unique device identifier
