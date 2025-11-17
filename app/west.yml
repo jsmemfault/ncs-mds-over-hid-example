@@ -1,13 +1,14 @@
 manifest:
   self:
-    path: mds-over-hid
+    path: app
 
   remotes:
     - name: ncs
-      url-base: https://github.com/nrfconnect
+      url-base: git@github.com:nrfconnect
 
   projects:
-    - name: nrf
+    - name: sdk-nrf
       remote: ncs
+      path: nrf
       revision: v3.1.1
       import: true
