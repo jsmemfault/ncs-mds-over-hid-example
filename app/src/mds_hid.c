@@ -7,6 +7,7 @@
 #include "mds_hid.h"
 
 #include <string.h>
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <memfault/config.h>
 #include <memfault/core/platform/device_info.h>
@@ -26,7 +27,7 @@ LOG_MODULE_REGISTER(mds_hid, LOG_LEVEL_INF);
 #define MDS_MAX_DEVICE_ID_LEN               64
 #define MDS_MAX_URI_LEN                     128
 #define MDS_MAX_AUTH_LEN                    128
-#define MDS_MAX_CHUNK_DATA_LEN              63
+#define MDS_MAX_CHUNK_DATA_LEN              61
 #define MDS_SEQUENCE_MASK                   0x1F
 
 /* Stream control modes */
@@ -90,10 +91,10 @@ static const uint8_t hid_report_desc[] = {
 	0x26, 0xFF, 0x00,  /* Logical Maximum (255) */
 	0xB1, 0x02,  /* Feature (Data, Variable, Absolute) */
 
-	/* Input Report: Stream Data (Report ID 0x06, 64 bytes) */
+	/* Input Report: Stream Data (Report ID 0x06, 63 bytes after ID = 64 total) */
 	0x85, MDS_REPORT_ID_STREAM_DATA,
 	0x09, 0x07,
-	0x95, 0x40,  /* Report Count (64) */
+	0x95, 0x3F,  /* Report Count (63) - seq(1) + len(1) + data(61) */
 	0x75, 0x08,  /* Report Size (8) */
 	0x15, 0x00,  /* Logical Minimum (0) */
 	0x26, 0xFF, 0x00,  /* Logical Maximum (255) */
@@ -113,7 +114,7 @@ struct mds_state {
 static struct mds_state mds = {
 	.hid_ready = false,
 	.streaming_enabled = false,
-	.chunk_number = 0,
+	.chunk_number = 1,  /* Start at 1 to match gateway expectation */
 };
 
 /* Memfault configuration strings */
@@ -223,9 +224,11 @@ static int mds_set_report(const struct device *dev,
 
 			if (mode == MDS_STREAM_MODE_ENABLED) {
 				mds.streaming_enabled = true;
+				/* Small delay to let gateway set up receive loop */
+				k_msleep(50);
 			} else if (mode == MDS_STREAM_MODE_DISABLED) {
 				mds.streaming_enabled = false;
-				mds.chunk_number = 0;
+				mds.chunk_number = 1;  /* Reset to 1 to match initial value */
 			} else {
 				LOG_WRN("Invalid stream mode %u", mode);
 				return -EINVAL;
@@ -274,13 +277,13 @@ bool mds_hid_is_streaming(void)
 
 int mds_hid_send_chunk(const struct device *hid_dev)
 {
-	uint8_t report[65];  /* Report ID (1) + sequence (1) + data (63) */
-	size_t chunk_max_size = MDS_MAX_CHUNK_DATA_LEN;  /* 63 */
+	uint8_t report[64];  /* Report ID (1) + sequence (1) + length (1) + data (61) = 64 */
+	size_t chunk_max_size = MDS_MAX_CHUNK_DATA_LEN;  /* 61 */
 	size_t chunk_size = chunk_max_size;
 	bool data_available;
 
-	/* Get chunk from Memfault packetizer */
-	data_available = memfault_packetizer_get_chunk(&report[2], &chunk_size);
+	/* Get chunk from Memfault packetizer - data starts at byte 3 */
+	data_available = memfault_packetizer_get_chunk(&report[3], &chunk_size);
 
 	if (!data_available) {
 		return 0;  /* No data available */
@@ -292,20 +295,42 @@ int mds_hid_send_chunk(const struct device *hid_dev)
 	/* Set sequence number in second byte (bits 0-4) */
 	report[1] = mds.chunk_number & MDS_SEQUENCE_MASK;
 
-	/* Pad remaining bytes to 63 total data bytes (excluding Report ID) */
-	if (chunk_size < 63) {
-		memset(&report[chunk_size + 2], 0, 63 - chunk_size);
+	/* Set payload length in third byte */
+	report[2] = (uint8_t)chunk_size;
+
+	/* Pad remaining bytes (gateway will ignore based on length byte) */
+	if (chunk_size < MDS_MAX_CHUNK_DATA_LEN) {
+		memset(&report[3 + chunk_size], 0, MDS_MAX_CHUNK_DATA_LEN - chunk_size);
 	}
 
-	/* Submit 65 bytes: 1 (Report ID) + 1 (sequence) + 63 (data) */
-	int ret = hid_device_submit_report(hid_dev, 65, report);
+	/* Debug: Log the full report header and first 16 bytes of payload */
+	LOG_INF("TX [%d]: %02X %02X %02X | %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
+		(int)chunk_size,
+		report[0], report[1], report[2],  /* Report ID, Seq, Len */
+		report[3], report[4], report[5], report[6], report[7], report[8], report[9], report[10],
+		report[11], report[12], report[13], report[14], report[15], report[16], report[17], report[18]);
+
+	/* Submit 64 bytes with retry on buffer full */
+	int ret;
+	int retries = 10;
+	do {
+		ret = hid_device_submit_report(hid_dev, 64, report);
+		if (ret == -EBUSY || ret == -EAGAIN) {
+			LOG_WRN("HID busy, retrying...");
+			k_msleep(10);
+			retries--;
+		} else {
+			break;
+		}
+	} while (retries > 0);
+
 	if (ret) {
 		memfault_packetizer_abort();
-		LOG_ERR("Failed to send chunk, err %d", ret);
+		LOG_ERR("Failed to send chunk after retries, err %d", ret);
 		return ret;
 	}
 
-	LOG_DBG("Sent chunk %d, size %zu", mds.chunk_number, chunk_size);
+	LOG_INF("Sent chunk #%d, size %zu bytes", mds.chunk_number, chunk_size);
 
 	/* Update chunk number (wraps at 31) */
 	mds.chunk_number = (mds.chunk_number + 1) & MDS_SEQUENCE_MASK;
